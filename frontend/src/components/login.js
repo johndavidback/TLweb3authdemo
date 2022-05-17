@@ -122,7 +122,7 @@ export const Login = () => {
             accessKeyId: data.AccessKeyId,
             secretAccessKey: data.SecretKey,
             sessionToken: data.SessionToken,
-            region: 'ap-southeast-2',
+            region: 'us-east-1',
             service: 'execute-api',
           });
           setAwsClient(aws);

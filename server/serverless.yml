@@ -1,5 +1,4 @@
-service: 
-  name: CustomLambdaAuth
+service: TLAuthServiceTest
 
 frameworkVersion: '2'
 
@@ -13,9 +12,10 @@ custom:
   customProviderName: my.ether.login
 
 provider:
-  region: ap-southeast-2
+  region: us-east-1
   name: aws
   runtime: nodejs12.x
+  stage: "dev"
   lambdaHashingVersion: '20201221'
   environment:
     DEVELOPER_PROVIDER_NAME: ${self:custom.customProviderName}
@@ -45,15 +45,150 @@ provider:
             - - "arn:aws:cognito-identity:#{AWS::Region}:#{AWS::AccountId}:identitypool"
               - Ref: CognitoIdentityPool
 functions:
-  Login: ${file(resources/functions.yml):Login}
-  GetNonce: ${file(resources/functions.yml):GetNonce}
-  Signup: ${file(resources/functions.yml):Signup}
-  Hello: ${file(resources/functions.yml):Hello}
+  GetNonce:
+    handler: src/get_nonce/index.handler
+    events:
+      - http:
+          path: nonce
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                address: true
+  Signup:
+    handler: src/signup/index.handler
+    events:
+      - http:
+          path: signup
+          method: post
+          cors: true
+  Login:
+    handler: src/login/index.handler
+    events:
+      - http:
+          path: login
+          method: post
+          cors: true
+          # request:
+          #   parameters:
+          #     paths:
+          #       client_id: true
+            # schema:
+            #   application/json: ${file(resources/login_request.json)}
+  Hello:
+    handler: src/hello/index.handler
+    events:
+      - http:
+          path: hello
+          method: get
+          cors: true
+          authorizer: aws_iam
 
 resources:
   Resources:
-    UserTable: ${file(resources/tables.yml):UserTable}
-    CognitoIdentityPool: ${file(resources/cognito.yml):CognitoIdentityPool}
-    CognitoAuthorizedRole: ${file(resources/cognito.yml):CognitoAuthorizedRole}
-    CognitoUnAuthorizedRole: ${file(resources/cognito.yml):CognitoUnAuthorizedRole}
-    CognitoIdentityPoolRolesMapping: ${file(resources/cognito.yml):CognitoIdentityPoolRolesMapping}
+    UserTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.userTable}
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: address
+            AttributeType: S
+        KeySchema:
+          - AttributeName: address
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.tableThroughputs.${self:provider.stage}}
+          WriteCapacityUnits: ${self:custom.tableThroughputs.${self:provider.stage}}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        AllowUnauthenticatedIdentities: false
+        IdentityPoolName: "${self:service}IdentityPool"
+        DeveloperProviderName: "${self:custom.customProviderName}"
+
+    CognitoAuthorizedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal: 
+                Federated: "cognito-identity.amazonaws.com"
+              Action: 
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals: 
+                  "cognito-identity.amazonaws.com:aud":
+                    { Ref: CognitoIdentityPool }
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated 
+            - Effect: "Allow"
+              Principal: 
+                Service: "apigateway.amazonaws.com"
+              Action: 
+                - "sts:AssumeRole"      
+        Policies:
+          - PolicyName: "CognitoAuthorizedPolicy"
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement: 
+                - Effect: "Allow"
+                  Action:
+                    - "cognito-identity:*"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:InvokeFunction"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource: 
+                    "Fn::Sub": "arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:*/*/GET/hello"
+
+    CognitoUnAuthorizedRole:
+        Type: AWS::IAM::Role
+        Properties:
+          MaxSessionDuration: 43200
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Principal:
+                  Federated: cognito-identity.amazonaws.com
+                Action: sts:AssumeRoleWithWebIdentity
+                Condition:
+                  ForAnyValue:StringLike:
+                    "cognito-identity.amazonaws.com:amr": "unauthenticated"
+          Policies:
+            - PolicyName: "CognitoUnAuthorizedPolicy"
+              PolicyDocument: 
+                Version: "2012-10-17"
+                Statement: 
+                  - Effect: "Deny"
+                    Action:
+                      - "cognito-identity:*"
+                    Resource: "*"
+                  - Effect: "Deny"
+                    Action:
+                      - "lambda:InvokeFunction"
+                    Resource: "*"
+
+    CognitoIdentityPoolRolesMapping:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId: { Ref: CognitoIdentityPool }
+        Roles:
+          authenticated: { Fn::GetAtt: [CognitoAuthorizedRole, Arn] }
+          unauthenticated: { Fn::GetAtt: [CognitoUnAuthorizedRole, Arn] }
+
+    # CognitoIdentityPool: ${file(resources/cognito.yml):CognitoIdentityPool}
+    # CognitoAuthorizedRole: ${file(resources/cognito.yml):CognitoAuthorizedRole}
+    # CognitoUnAuthorizedRole: ${file(resources/cognito.yml):CognitoUnAuthorizedRole}
+    # CognitoIdentityPoolRolesMapping: ${file(resources/cognito.yml):CognitoIdentityPoolRolesMapping}

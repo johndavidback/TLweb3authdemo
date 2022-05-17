@@ -38,7 +38,7 @@ function Main() {
           accessKeyId,
           secretAccessKey: secretKey,
           sessionToken,
-          region: 'ap-southeast-2',
+          region: 'us-east-1',
           service: 'execute-api',
         });
         setAwsClient(aws);
